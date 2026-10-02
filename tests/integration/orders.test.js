@@ -1,15 +1,22 @@
 const request = require("supertest");
 const { connect, clearDatabase, closeDatabase } = require("../helpers/db");
+const { createAdminAndToken } = require("../helpers/auth");
 
 let app;
 let Product;
 let Order;
+let adminToken;
 
 beforeAll(async () => {
   await connect();
   app = require("../../src/app");
   Product = require("../../src/models/Product");
   Order = require("../../src/models/Order");
+});
+
+beforeEach(async () => {
+  const { token } = await createAdminAndToken();
+  adminToken = token;
 });
 
 afterEach(async () => {
@@ -21,6 +28,10 @@ afterAll(async () => {
 });
 
 describe("API de pedidos (integración, MongoDB real en memoria)", () => {
+  function asAdmin(req) {
+    return req.set("Authorization", `Bearer ${adminToken}`);
+  }
+
   async function createProduct(overrides = {}) {
     return Product.create({
       nombre: "Café americano",
@@ -190,11 +201,16 @@ describe("API de pedidos (integración, MongoDB real en memoria)", () => {
       .post("/api/orders")
       .send(pedidoBase({ items: [{ productoId: cafe._id.toString(), cantidad: 1 }] }));
 
-    const res = await request(app).get("/api/orders");
+    const res = await asAdmin(request(app).get("/api/orders"));
     expect(res.body.data).toHaveLength(1);
 
-    const filtered = await request(app).get("/api/orders?estado=cancelado");
+    const filtered = await asAdmin(request(app).get("/api/orders?estado=cancelado"));
     expect(filtered.body.data).toHaveLength(0);
+  });
+
+  test("GET /api/orders sin token responde 401", async () => {
+    const res = await request(app).get("/api/orders");
+    expect(res.status).toBe(401);
   });
 
   test("GET /api/orders/:id devuelve el pedido creado", async () => {
@@ -219,9 +235,9 @@ describe("API de pedidos (integración, MongoDB real en memoria)", () => {
       .post("/api/orders")
       .send(pedidoBase({ items: [{ productoId: cafe._id.toString(), cantidad: 1 }] }));
 
-    const res = await request(app)
-      .put(`/api/orders/${created.body.data._id}/status`)
-      .send({ estado: "confirmado" });
+    const res = await asAdmin(request(app).put(`/api/orders/${created.body.data._id}/status`)).send({
+      estado: "confirmado",
+    });
 
     expect(res.status).toBe(200);
     expect(res.body.data.estado).toBe("confirmado");
@@ -230,10 +246,23 @@ describe("API de pedidos (integración, MongoDB real en memoria)", () => {
     expect(stored.estado).toBe("confirmado");
   });
 
-  test("PUT /api/orders/:id/status con id inexistente responde 404", async () => {
+  test("PUT /api/orders/:id/status sin token responde 401", async () => {
+    const cafe = await createProduct({ stock: 10 });
+    const created = await request(app)
+      .post("/api/orders")
+      .send(pedidoBase({ items: [{ productoId: cafe._id.toString(), cantidad: 1 }] }));
+
     const res = await request(app)
-      .put("/api/orders/000000000000000000000000/status")
+      .put(`/api/orders/${created.body.data._id}/status`)
       .send({ estado: "confirmado" });
+
+    expect(res.status).toBe(401);
+  });
+
+  test("PUT /api/orders/:id/status con id inexistente responde 404", async () => {
+    const res = await asAdmin(request(app).put("/api/orders/000000000000000000000000/status")).send({
+      estado: "confirmado",
+    });
 
     expect(res.status).toBe(404);
   });
@@ -244,9 +273,9 @@ describe("API de pedidos (integración, MongoDB real en memoria)", () => {
       .post("/api/orders")
       .send(pedidoBase({ items: [{ productoId: cafe._id.toString(), cantidad: 1 }] }));
 
-    const res = await request(app)
-      .put(`/api/orders/${created.body.data._id}/status`)
-      .send({ estado: "en-la-luna" });
+    const res = await asAdmin(request(app).put(`/api/orders/${created.body.data._id}/status`)).send({
+      estado: "en-la-luna",
+    });
 
     expect(res.status).toBe(400);
   });

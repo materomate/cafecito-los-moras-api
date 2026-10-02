@@ -2,6 +2,7 @@ require("dotenv").config();
 const mongoose = require("mongoose");
 const connectDB = require("../src/config/db");
 const Product = require("../src/models/Product");
+const User = require("../src/models/User");
 
 const products = [
   {
@@ -51,11 +52,28 @@ const products = [
   },
 ];
 
+const ADMIN_EMAIL = "admin@cafecitolosmoras.com";
+const ADMIN_PASSWORD = "admin1234";
+
 async function seed() {
   await connectDB();
   await Product.deleteMany({});
   await Product.insertMany(products);
   console.log(`${products.length} productos insertados.`);
+
+  const existingAdmin = await User.findOne({ email: ADMIN_EMAIL });
+  if (!existingAdmin) {
+    await User.create({
+      nombre: "Administrador",
+      email: ADMIN_EMAIL,
+      password: ADMIN_PASSWORD,
+      rol: "admin",
+    });
+    console.log(`Usuario admin creado -> correo: ${ADMIN_EMAIL} / contraseña: ${ADMIN_PASSWORD}`);
+  } else {
+    console.log("El usuario admin ya existía, no se modificó.");
+  }
+
   await mongoose.disconnect();
 }
 

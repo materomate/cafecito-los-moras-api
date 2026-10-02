@@ -3,4 +3,5 @@ module.exports = {
   testTimeout: 30000,
   verbose: true,
   coveragePathIgnorePatterns: ["/node_modules/", "/tests/"],
+  setupFiles: ["dotenv/config"],
 };

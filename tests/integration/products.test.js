@@ -1,14 +1,21 @@
 const request = require("supertest");
 const mongoose = require("mongoose");
 const { connect, clearDatabase, closeDatabase } = require("../helpers/db");
+const { createAdminAndToken, createClienteAndToken } = require("../helpers/auth");
 
 let app;
 let Product;
+let adminToken;
 
 beforeAll(async () => {
   await connect();
   app = require("../../src/app");
   Product = require("../../src/models/Product");
+});
+
+beforeEach(async () => {
+  const { token } = await createAdminAndToken();
+  adminToken = token;
 });
 
 afterEach(async () => {
@@ -20,6 +27,10 @@ afterAll(async () => {
 });
 
 describe("API de productos (integración, MongoDB real en memoria)", () => {
+  function asAdmin(req) {
+    return req.set("Authorization", `Bearer ${adminToken}`);
+  }
+
   async function createProduct(overrides = {}) {
     return Product.create({
       nombre: "Café americano",
@@ -33,7 +44,7 @@ describe("API de productos (integración, MongoDB real en memoria)", () => {
   }
 
   test("POST /api/products crea un producto válido y lo persiste en MongoDB", async () => {
-    const res = await request(app).post("/api/products").send({
+    const res = await asAdmin(request(app).post("/api/products")).send({
       nombre: "Capuchino",
       descripcion: "Espresso con leche",
       precio: 45,
@@ -50,8 +61,39 @@ describe("API de productos (integración, MongoDB real en memoria)", () => {
     expect(stored.stock).toBe(10);
   });
 
+  test("POST /api/products sin token responde 401 y no crea nada", async () => {
+    const res = await request(app).post("/api/products").send({
+      nombre: "Capuchino",
+      descripcion: "Espresso con leche",
+      precio: 45,
+      stock: 10,
+      categoria: "Cafés",
+    });
+
+    expect(res.status).toBe(401);
+    expect(await Product.countDocuments()).toBe(0);
+  });
+
+  test("POST /api/products con token de cliente (no admin) responde 403", async () => {
+    const { token } = await createClienteAndToken();
+
+    const res = await request(app)
+      .post("/api/products")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        nombre: "Capuchino",
+        descripcion: "Espresso con leche",
+        precio: 45,
+        stock: 10,
+        categoria: "Cafés",
+      });
+
+    expect(res.status).toBe(403);
+    expect(await Product.countDocuments()).toBe(0);
+  });
+
   test("POST /api/products rechaza datos inválidos con 400 y no crea nada", async () => {
-    const res = await request(app).post("/api/products").send({ nombre: "Sin nada más" });
+    const res = await asAdmin(request(app).post("/api/products")).send({ nombre: "Sin nada más" });
 
     expect(res.status).toBe(400);
     expect(res.body.success).toBe(false);
@@ -60,16 +102,14 @@ describe("API de productos (integración, MongoDB real en memoria)", () => {
 
   test("POST /api/products ignora campos no permitidos (p. ej. _id)", async () => {
     const fakeId = new mongoose.Types.ObjectId().toString();
-    const res = await request(app)
-      .post("/api/products")
-      .send({
-        _id: fakeId,
-        nombre: "Té",
-        descripcion: "Té negro",
-        precio: 20,
-        stock: 5,
-        categoria: "Bebidas frías",
-      });
+    const res = await asAdmin(request(app).post("/api/products")).send({
+      _id: fakeId,
+      nombre: "Té",
+      descripcion: "Té negro",
+      precio: 20,
+      stock: 5,
+      categoria: "Bebidas frías",
+    });
 
     expect(res.status).toBe(201);
     expect(res.body.data._id).not.toBe(fakeId);
@@ -122,7 +162,7 @@ describe("API de productos (integración, MongoDB real en memoria)", () => {
 
   test("PUT /api/products/:id actualiza solo los campos enviados", async () => {
     const product = await createProduct();
-    const res = await request(app).put(`/api/products/${product._id}`).send({ precio: 50 });
+    const res = await asAdmin(request(app).put(`/api/products/${product._id}`)).send({ precio: 50 });
 
     expect(res.status).toBe(200);
     expect(res.body.data.precio).toBe(50);
@@ -132,16 +172,22 @@ describe("API de productos (integración, MongoDB real en memoria)", () => {
     expect(stored.precio).toBe(50);
   });
 
+  test("PUT /api/products/:id sin token responde 401", async () => {
+    const product = await createProduct();
+    const res = await request(app).put(`/api/products/${product._id}`).send({ precio: 50 });
+    expect(res.status).toBe(401);
+  });
+
   test("PUT /api/products/:id con id inexistente responde 404", async () => {
-    const res = await request(app)
-      .put(`/api/products/${new mongoose.Types.ObjectId()}`)
-      .send({ precio: 10 });
+    const res = await asAdmin(request(app).put(`/api/products/${new mongoose.Types.ObjectId()}`)).send({
+      precio: 10,
+    });
     expect(res.status).toBe(404);
   });
 
   test("DELETE /api/products/:id desactiva en vez de borrar el documento", async () => {
     const product = await createProduct();
-    const res = await request(app).delete(`/api/products/${product._id}`);
+    const res = await asAdmin(request(app).delete(`/api/products/${product._id}`));
 
     expect(res.status).toBe(200);
     expect(res.body.data.activo).toBe(false);
@@ -151,8 +197,14 @@ describe("API de productos (integración, MongoDB real en memoria)", () => {
     expect(stillExists.activo).toBe(false);
   });
 
+  test("DELETE /api/products/:id sin token responde 401", async () => {
+    const product = await createProduct();
+    const res = await request(app).delete(`/api/products/${product._id}`);
+    expect(res.status).toBe(401);
+  });
+
   test("DELETE /api/products/:id con id inexistente responde 404", async () => {
-    const res = await request(app).delete(`/api/products/${new mongoose.Types.ObjectId()}`);
+    const res = await asAdmin(request(app).delete(`/api/products/${new mongoose.Types.ObjectId()}`));
     expect(res.status).toBe(404);
   });
 });
